@@ -53,21 +53,3 @@ sudo chmod +x /bin/send /usr/bin/telegramSendMessage
 
 Requires **Node.js 18+**.
 
-## Run on Startup
-
-```bash
-crontab -e
-```
-```
-@reboot /bin/send message "System started up"
-```
-
-## Notes
-
-- Files are read fully into memory before upload — fine for typical images and small files, not ideal for very large ones.
-- Never commit `credentials.conf` to git — it lives outside the repo under `~/.config/` for that reason. If a token ever leaks, revoke it via @BotFather and generate a new one.
-
-## License
-
-MIT
-# send
