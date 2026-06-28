@@ -1,0 +1,23 @@
+#!/bin/bash
+
+type="$1"
+shift
+
+case "$type" in
+    message)
+        "/usr/bin/telegramSendMessage" message "$*"
+        ;;
+    img)
+        "/usr/bin/telegramSendMessage" img "$(pwd)/$*"
+        ;;
+    url)
+        "/usr/bin/telegramSendMessage" url "$*"
+        ;;
+    file)
+        "/usr/bin/telegramSendMessage" file "$(pwd)/$*"
+        ;;
+    *)
+        echo "Unknown command: $type"
+        exit 1
+        ;;
+esac

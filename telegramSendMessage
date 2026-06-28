@@ -1,0 +1,300 @@
+#!/usr/bin/env node
+/*
+ * telegramSendMessage.js
+ *
+ * Легкий скрипт без зовнішніх залежностей: відправляє текстові
+ * повідомлення, зображення та файли в Telegram через Bot API,
+ * використовуючи вбудовані у Node.js 18+ fetch/FormData/Blob
+ * (бібліотека типу node-telegram-bot-api тут не потрібна — Telegram
+ * Bot API це звичайні HTTP-запити, для файлів — multipart/form-data,
+ * який fetch+FormData+Blob формують самостійно, без сторонніх пакетів).
+ *
+ * Налаштування (заповни нижче перед першим запуском):
+ *   BOT_TOKEN — токен бота, отриманий від @BotFather у Telegram.
+ *   CHAT_ID   — ID чату/користувача, куди слати повідомлення.
+ *
+ * ЯК ДІЗНАТИСЬ СВІЙ CHAT_ID (якщо ти ще не писав боту):
+ *   Бот фізично не може сам "знайти" тебе за @username і написати
+ *   першим — це обмеження самого Telegram (захист від спаму), а не
+ *   цього скрипту. Тому потрібно один раз:
+ *     1. Знайти свого бота в Telegram і написати йому будь-що (хоч "привіт").
+ *     2. Заповнити нижче лише BOT_TOKEN (CHAT_ID можна лишити як є).
+ *     3. Запустити: node telegramSendMessage.js find-chat-id
+ *        Скрипт покаже список усіх, хто писав боту, разом з їхніми
+ *        username і chat_id — знайди там себе і встав знайдений
+ *        chat_id у CHAT_ID нижче.
+ *
+ * Команди:
+ *   message <текст>   — звичайне текстове повідомлення
+ *   img <шлях>         — відправити зображення розгорнутим (sendPhoto),
+ *                        шлях має вести до існуючого файлу зображення
+ *   file <шлях>        — відправити будь-який файл як документ
+ *                        (sendDocument) — zip, txt, pdf тощо, без
+ *                        перетворень, той самий файл, що на диску
+ *   url <посилання>    — відправити URL як текстове повідомлення
+ *                        (Telegram сам згенерує прев'ю посилання)
+ *   find-chat-id       — показати chat_id усіх, хто писав боту
+ *
+ * Зараз скрипт розрахований на файли помірного розміру (картинки,
+ * текстові файли, невеликі архіви) — він читає файл повністю в пам'ять
+ * перед відправкою. Для дуже великих файлів (ближче до лімітів
+ * Telegram) знадобиться потокове завантаження — це окрема задача
+ * на майбутнє, зараз не реалізовано.
+ *
+ * Очікуваний виклик з bash-скрипту (твій приклад):
+ *   case "$type" in
+ *       message) telegramSendMessage message "$*" ;;
+ *       img)     telegramSendMessage img "$(pwd)/$*" ;;
+ *       url)     telegramSendMessage url "$*" ;;
+ *       file)    telegramSendMessage file "$(pwd)/$*" ;;
+ *   esac
+ */
+
+'use strict';
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const configPath = path.join(
+  os.homedir(),
+  '.config/telegram-api/credentials.conf'
+);
+
+function loadConfig() {
+  const text = fs.readFileSync(configPath, 'utf-8');
+
+  const config = {};
+
+  text.split('\n').forEach(line => {
+    line = line.trim();
+
+    if (!line || line.startsWith('#')) return;
+
+    const [key, value] = line.split('=');
+    if (!key || !value) return;
+
+    config[key.trim()] = value.trim().replace(/"/g, '');
+  });
+
+  return config;
+}
+
+const config = loadConfig();
+
+const BOT_TOKEN = config.botToken;
+const CHAT_ID = config.chatId;
+
+function requireCredentials() {
+  if (BOT_TOKEN === 'PUT_YOUR_BOT_TOKEN_HERE' || CHAT_ID === 'PUT_YOUR_CHAT_ID_HERE') {
+    console.error('Помилка: заповни BOT_TOKEN і CHAT_ID на початку telegramSendMessage.js перед використанням.');
+    process.exit(1);
+  }
+}
+
+async function callTelegramApi(method, body, isMultipart) {
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/${method}`;
+  const options = isMultipart
+    ? { method: 'POST', body }
+    : {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      };
+
+  const response = await fetch(url, options);
+
+  // Telegram у разі грубих помилок (невалідний токен тощо) може
+  // повернути не-JSON відповідь — обробляємо це окремо, щоб дати
+  // зрозуміле повідомлення, а не "Unexpected token".
+  let data;
+  try {
+    data = await response.json();
+  } catch (parseErr) {
+    throw new Error(`Telegram повернув невалідну відповідь (HTTP ${response.status}). Перевір BOT_TOKEN.`);
+  }
+
+  if (!data.ok) {
+    throw new Error(data.description || `Telegram API повернув помилку (метод ${method}).`);
+  }
+
+  return data;
+}
+
+async function sendTelegramMessage(text) {
+  requireCredentials();
+  await callTelegramApi('sendMessage', { chat_id: CHAT_ID, text: text }, false);
+}
+
+async function sendTelegramUrl(url) {
+  requireCredentials();
+  // URL відправляється як звичайне текстове повідомлення — Telegram
+  // сам розпізнає посилання і згенерує прев'ю сторінки.
+  await callTelegramApi('sendMessage', { chat_id: CHAT_ID, text: url }, false);
+}
+
+/* Перевіряє, що шлях існує і є звичайним файлом (не директорією тощо),
+ * і повертає його вміст. Якщо файл не знайдено — друкує зрозумілу
+ * помилку в термінал і завершує процес (saме так, як попросили: чітке
+ * повідомлення про помилку, без спроб "вгадати" чи виправити шлях). */
+function readFileOrExit(filePath, commandName) {
+  let stat;
+  try {
+    stat = fs.statSync(filePath);
+  } catch (err) {
+    console.error(`Помилка: файл не знайдено: ${filePath}`);
+    console.error(`(команда "${commandName}" очікує повний шлях до існуючого файлу)`);
+    process.exit(1);
+  }
+
+  if (!stat.isFile()) {
+    console.error(`Помилка: вказаний шлях існує, але це не файл: ${filePath}`);
+    process.exit(1);
+  }
+
+  try {
+    return fs.readFileSync(filePath);
+  } catch (err) {
+    console.error(`Помилка: не вдалося прочитати файл ${filePath}: ${err.message}`);
+    process.exit(1);
+  }
+}
+
+async function sendTelegramPhoto(filePath) {
+  const buf = readFileOrExit(filePath, 'img');
+  requireCredentials();
+
+  const fd = new FormData();
+  fd.append('chat_id', CHAT_ID);
+  fd.append('photo', new Blob([buf]), path.basename(filePath));
+
+  await callTelegramApi('sendPhoto', fd, true);
+}
+
+async function sendTelegramDocument(filePath) {
+  const buf = readFileOrExit(filePath, 'file');
+  requireCredentials();
+
+  const fd = new FormData();
+  fd.append('chat_id', CHAT_ID);
+  fd.append('document', new Blob([buf]), path.basename(filePath));
+
+  await callTelegramApi('sendDocument', fd, true);
+}
+
+async function findChatId() {
+  if (BOT_TOKEN === 'PUT_YOUR_BOT_TOKEN_HERE') {
+    console.error('Помилка: спочатку заповни BOT_TOKEN на початку telegramSendMessage.js.');
+    process.exit(1);
+  }
+
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates`;
+  const response = await fetch(url);
+
+  let data;
+  try {
+    data = await response.json();
+  } catch (parseErr) {
+    throw new Error(`Telegram повернув невалідну відповідь (HTTP ${response.status}). Перевір BOT_TOKEN.`);
+  }
+
+  if (!data.ok) {
+    throw new Error(data.description || 'Telegram API повернув помилку.');
+  }
+
+  if (data.result.length === 0) {
+    console.log('Поки що немає жодного повідомлення боту.');
+    console.log('Знайди свого бота в Telegram і напиши йому щось (хоч "привіт"), потім запусти цю команду ще раз.');
+    return;
+  }
+
+  // Збираємо унікальні чати (один користувач міг написати кілька разів)
+  const seen = new Map();
+  for (const update of data.result) {
+    const msg = update.message || update.channel_post;
+    if (!msg || !msg.chat) continue;
+    const chat = msg.chat;
+    seen.set(chat.id, chat);
+  }
+
+  console.log('Знайдені чати:');
+  for (const chat of seen.values()) {
+    const name = chat.username ? '@' + chat.username : (chat.title || chat.first_name || '(без імені)');
+    console.log(`  chat_id: ${chat.id}    ${name}`);
+  }
+  console.log('');
+  console.log('Встав потрібний chat_id у CHAT_ID на початку telegramSendMessage.js.');
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  const command = args[0];
+
+  // Команди, що приймають весь "хвіст" аргументів як один текст
+  // (так само, як це робив твій bash-скрипт через "$*").
+  const rest = args.slice(1).join(' ');
+
+  try {
+    switch (command) {
+      case 'message': {
+        if (!rest.trim()) {
+          console.error('Використання: telegramSendMessage message "<текст повідомлення>"');
+          process.exit(1);
+        }
+        await sendTelegramMessage(rest);
+        break;
+      }
+
+      case 'img': {
+        if (!rest.trim()) {
+          console.error('Використання: telegramSendMessage img <шлях до зображення>');
+          process.exit(1);
+        }
+        await sendTelegramPhoto(rest);
+        break;
+      }
+
+      case 'file': {
+        if (!rest.trim()) {
+          console.error('Використання: telegramSendMessage file <шлях до файлу>');
+          process.exit(1);
+        }
+        await sendTelegramDocument(rest);
+        break;
+      }
+
+      case 'url': {
+        if (!rest.trim()) {
+          console.error('Використання: telegramSendMessage url <посилання>');
+          process.exit(1);
+        }
+        await sendTelegramUrl(rest);
+        break;
+      }
+
+      case 'find-chat-id': {
+        await findChatId();
+        break;
+      }
+
+      // Невідома команда — друкуємо підказку, а не намагаємось вгадати,
+      // що мав на увазі користувач (типова друкарська помилка в назві
+      // команди інакше мовчки відправилась би як текстове повідомлення).
+      default: {
+        console.error(`Невідома команда: "${command || ''}"`);
+        console.error('Доступні команди:');
+        console.error('  telegramSendMessage message "<текст>"');
+        console.error('  telegramSendMessage img <шлях до зображення>');
+        console.error('  telegramSendMessage file <шлях до файлу>');
+        console.error('  telegramSendMessage url <посилання>');
+        console.error('  telegramSendMessage find-chat-id');
+        process.exit(1);
+      }
+    }
+  } catch (err) {
+    console.error('Помилка:', err.message);
+    process.exit(1);
+  }
+}
+
+main();
