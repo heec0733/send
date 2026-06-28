@@ -6,7 +6,7 @@ A lightweight, dependency-free CLI utility that lets you send yourself notificat
 sudo apt update && sudo apt upgrade -y && send message "Update finished!"
 ```
 
-![Architecture](assets/architecture.png)
+![Architecture](architecture.png)
 
 ## How It Works
 
