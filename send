@@ -3,7 +3,30 @@
 type="$1"
 shift
 
+help(){
+# Instructions
+# Script command : send help
+#
+echo 'Usage:
+
+send message "text"
+    Sends a text message to the recipient.
+
+send image "path to image"
+    Sends an image without compression.
+
+send url "https://example.com"
+    Sends a clickable URL.
+
+send file "path to file"
+    Sends a file as an attachment.'
+}
+
 case "$type" in
+    help)
+        # Instructions
+        help
+      ;;
     message)
         "/usr/bin/telegramSendMessage" message "$*"
         ;;
@@ -17,7 +40,10 @@ case "$type" in
         "/usr/bin/telegramSendMessage" file "$(pwd)/$*"
         ;;
     *)
-        echo "Unknown command: $type"
-        exit 1
-        ;;
+    # Exit zone
+    #
+    echo "send: bad usage"
+    echo "Try 'send help' for more information."
+    exit 1
+    ;;
 esac
